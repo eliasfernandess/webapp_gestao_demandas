@@ -9,10 +9,20 @@ CREATE TYPE prioridade_enum AS ENUM ('Medium', 'High', 'Highst');
 -- Enum for status
 CREATE TYPE status_enum AS ENUM (
   'Pendente',
+  'Aprovação',
   'Aguardando aprovação',
   'Aprovado',
   'Desenvolvendo',
-  'Aprovado e entregue'
+  'Aprovado e entregue',
+  'Em correção'
+);
+
+-- Enum for situacao
+CREATE TYPE situacao_enum AS ENUM (
+  'Em andamento',
+  'Entregue',
+  'Atrasado',
+  'Aguardando aprovação'
 );
 
 -- Demandas table
@@ -24,6 +34,8 @@ CREATE TABLE demandas (
   prioridade prioridade_enum NOT NULL DEFAULT 'Medium',
   prazo DATE,
   status status_enum NOT NULL DEFAULT 'Pendente',
+  situacao situacao_enum NOT NULL DEFAULT 'Em andamento',
+  demanda_pai_id UUID REFERENCES demandas(id) ON DELETE SET NULL,
   anotacoes TEXT DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -51,6 +63,8 @@ CREATE INDEX idx_demandas_status ON demandas(status);
 CREATE INDEX idx_demandas_prioridade ON demandas(prioridade);
 CREATE INDEX idx_demandas_glpi ON demandas(numero_glpi);
 CREATE INDEX idx_demandas_created ON demandas(created_at);
+CREATE INDEX idx_demandas_situacao ON demandas(situacao);
+CREATE INDEX idx_demandas_pai ON demandas(demanda_pai_id);
 CREATE INDEX idx_checklist_data ON checklist(data);
 CREATE INDEX idx_notas_updated ON notas(updated_at);
 
@@ -63,9 +77,30 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Auto-update situacao trigger
+CREATE OR REPLACE FUNCTION update_situacao()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.status = 'Aprovado e entregue' THEN
+    NEW.situacao = 'Entregue';
+  ELSIF NEW.status IN ('Aguardando aprovação', 'Aprovação') THEN
+    NEW.situacao = 'Aguardando aprovação';
+  ELSIF NEW.prazo IS NOT NULL AND NEW.prazo < CURRENT_DATE AND NEW.status != 'Aprovado e entregue' THEN
+    NEW.situacao = 'Atrasado';
+  ELSE
+    NEW.situacao = 'Em andamento';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TRIGGER trigger_demandas_updated
   BEFORE UPDATE ON demandas
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER trigger_demandas_situacao
+  BEFORE INSERT OR UPDATE ON demandas
+  FOR EACH ROW EXECUTE FUNCTION update_situacao();
 
 CREATE TRIGGER trigger_notas_updated
   BEFORE UPDATE ON notas

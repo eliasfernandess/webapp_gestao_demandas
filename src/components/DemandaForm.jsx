@@ -1,10 +1,18 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useToast } from '../contexts/ToastContext'
-import { Sparkles, Wand2, X } from 'lucide-react'
+import { Sparkles, Wand2, X, GitBranch } from 'lucide-react'
 
 const PRIORIDADES = ['Medium', 'High', 'Highst']
-const STATUSES = ['Pendente', 'Aguardando aprovação', 'Aprovado', 'Desenvolvendo', 'Aprovado e entregue']
+const STATUSES = [
+    'Pendente',
+    'Aprovação',
+    'Aguardando aprovação',
+    'Aprovado',
+    'Desenvolvendo',
+    'Aprovado e entregue',
+    'Em correção'
+]
 
 const emptyForm = {
     numero_glpi: '',
@@ -16,16 +24,16 @@ const emptyForm = {
     anotacoes: '',
 }
 
-export default function DemandaForm({ demanda, onClose, onSaved }) {
+export default function DemandaForm({ demanda, onClose, onSaved, isVariation = false }) {
     const { addToast } = useToast()
     const [form, setForm] = useState(demanda ? {
         numero_glpi: demanda.numero_glpi || '',
-        titulo: demanda.titulo || '',
+        titulo: isVariation ? `${demanda.titulo} (variação)` : (demanda.titulo || ''),
         descricao: demanda.descricao || '',
         prioridade: demanda.prioridade || 'Medium',
-        status: demanda.status || 'Pendente',
+        status: isVariation ? 'Em correção' : (demanda.status || 'Pendente'),
         prazo: demanda.prazo || '',
-        anotacoes: demanda.anotacoes || '',
+        anotacoes: isVariation ? '' : (demanda.anotacoes || ''),
     } : { ...emptyForm })
     const [saving, setSaving] = useState(false)
     const [aiPrompt, setAiPrompt] = useState('')
@@ -81,8 +89,13 @@ export default function DemandaForm({ demanda, onClose, onSaved }) {
             anotacoes: form.anotacoes,
         }
 
+        // If creating a variation, set demanda_pai_id
+        if (isVariation && demanda) {
+            payload.demanda_pai_id = demanda.id
+        }
+
         let error
-        if (demanda) {
+        if (demanda && !isVariation) {
             const result = await supabase
                 .from('demandas')
                 .update(payload)
@@ -99,7 +112,10 @@ export default function DemandaForm({ demanda, onClose, onSaved }) {
             addToast('Erro ao salvar demanda', 'error')
             console.error(error)
         } else {
-            addToast(demanda ? 'Demanda atualizada!' : 'Demanda criada!', 'success')
+            const msg = isVariation
+                ? 'Variação criada com sucesso!'
+                : (demanda ? 'Demanda atualizada!' : 'Demanda criada!')
+            addToast(msg, 'success')
             onSaved()
             onClose()
         }
@@ -110,45 +126,66 @@ export default function DemandaForm({ demanda, onClose, onSaved }) {
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()}>
                 <div className="modal-header">
-                    <h2>{demanda ? 'Editar Demanda' : 'Nova Demanda'}</h2>
+                    <h2 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {isVariation && <GitBranch size={18} color="var(--accent)" />}
+                        {isVariation ? 'Criar Variação' : (demanda ? 'Editar Demanda' : 'Nova Demanda')}
+                    </h2>
                     <button className="btn btn-ghost" onClick={onClose}>
                         <X size={20} />
                     </button>
                 </div>
 
+                {isVariation && (
+                    <div style={{
+                        padding: '10px 24px',
+                        background: 'var(--accent-light)',
+                        fontSize: '0.82rem',
+                        color: 'var(--accent)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontWeight: 500
+                    }}>
+                        <GitBranch size={14} />
+                        Variação da demanda: <strong>{demanda?.titulo}</strong>
+                    </div>
+                )}
+
                 <form onSubmit={handleSubmit}>
                     <div className="modal-body">
                         {/* AI Section */}
-                        <div className="ai-section">
-                            <div className="ai-section-title">
-                                <Sparkles size={16} />
-                                Gerar com IA
+                        {!isVariation && (
+                            <div className="ai-section">
+                                <div className="ai-section-title">
+                                    <Sparkles size={16} />
+                                    Gerar com IA
+                                </div>
+                                <div className="ai-row">
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="Descreva sua demanda ou palavra-chave"
+                                        value={aiPrompt}
+                                        onChange={e => setAiPrompt(e.target.value)}
+                                    />
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={handleGenerateAI}
+                                        disabled={aiLoading || !aiPrompt.trim()}
+                                    >
+                                        {aiLoading ? (
+                                            <span className="loading-spinner" />
+                                        ) : (
+                                            <>
+                                                <Wand2 size={16} />
+                                                Gerar
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
-                            <div className="ai-row">
-                                <input
-                                    type="text"
-                                    className="form-input"
-                                    placeholder="Descreva sua demanda ou palavra-chave"
-                                    value={aiPrompt}
-                                    onChange={e => setAiPrompt(e.target.value)}
-                                />
-                                <button
-                                    type="button"
-                                    className="btn btn-primary"
-                                    onClick={handleGenerateAI}
-                                    disabled={aiLoading || !aiPrompt.trim()}
-                                >
-                                    {aiLoading ? (
-                                        <span className="loading-spinner" />
-                                    ) : (
-                                        <>
-                                            <Wand2 size={16} />
-                                            Gerar
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
+                        )}
 
                         {/* Form Fields */}
                         <div className="form-row">
@@ -241,7 +278,9 @@ export default function DemandaForm({ demanda, onClose, onSaved }) {
                             Cancelar
                         </button>
                         <button type="submit" className="btn btn-primary" disabled={saving}>
-                            {saving ? <span className="loading-spinner" /> : (demanda ? 'Salvar Alterações' : 'Criar Demanda')}
+                            {saving ? <span className="loading-spinner" /> : (
+                                isVariation ? 'Criar Variação' : (demanda ? 'Salvar Alterações' : 'Criar Demanda')
+                            )}
                         </button>
                     </div>
                 </form>

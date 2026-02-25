@@ -7,15 +7,27 @@ import {
     Hourglass,
     CheckCircle2,
     Search,
-    TrendingUp
+    TrendingUp,
+    AlertCircle,
+    ShieldCheck,
+    RotateCcw
 } from 'lucide-react'
 
 const STATUS_CONFIG = {
     'Pendente': { badge: 'badge-pendente', icon: Clock },
+    'Aprovação': { badge: 'badge-aprovacao', icon: ShieldCheck },
     'Aguardando aprovação': { badge: 'badge-aguardando', icon: Hourglass },
     'Aprovado': { badge: 'badge-aprovado', icon: CheckCircle2 },
     'Desenvolvendo': { badge: 'badge-desenvolvendo', icon: Code2 },
     'Aprovado e entregue': { badge: 'badge-entregue', icon: CheckCircle2 },
+    'Em correção': { badge: 'badge-correcao', icon: RotateCcw },
+}
+
+const SITUACAO_CONFIG = {
+    'Em andamento': { badge: 'badge-sit-em-andamento' },
+    'Entregue': { badge: 'badge-sit-entregue' },
+    'Atrasado': { badge: 'badge-sit-atrasado' },
+    'Aguardando aprovação': { badge: 'badge-sit-aguardando' },
 }
 
 const PRIORITY_CONFIG = {
@@ -29,6 +41,7 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true)
     const [filterStatus, setFilterStatus] = useState('')
     const [filterPriority, setFilterPriority] = useState('')
+    const [filterSituacao, setFilterSituacao] = useState('')
     const [filterGlpi, setFilterGlpi] = useState('')
     const [searchText, setSearchText] = useState('')
 
@@ -46,13 +59,23 @@ export default function DashboardPage() {
         setLoading(false)
     }
 
+    const computeSituacao = (d) => {
+        if (d.situacao) return d.situacao
+        if (d.status === 'Aprovado e entregue') return 'Entregue'
+        if (d.status === 'Aguardando aprovação' || d.status === 'Aprovação') return 'Aguardando aprovação'
+        if (d.prazo && new Date(d.prazo) < new Date() && d.status !== 'Aprovado e entregue') return 'Atrasado'
+        return 'Em andamento'
+    }
+
     const stats = useMemo(() => {
         return {
             total: demandas.length,
             pendentes: demandas.filter(d => d.status === 'Pendente').length,
             desenvolvendo: demandas.filter(d => d.status === 'Desenvolvendo').length,
-            aguardando: demandas.filter(d => d.status === 'Aguardando aprovação').length,
+            aguardando: demandas.filter(d => d.status === 'Aguardando aprovação' || d.status === 'Aprovação').length,
             entregues: demandas.filter(d => d.status === 'Aprovado e entregue').length,
+            atrasados: demandas.filter(d => computeSituacao(d) === 'Atrasado').length,
+            correcao: demandas.filter(d => d.status === 'Em correção').length,
         }
     }, [demandas])
 
@@ -64,6 +87,9 @@ export default function DashboardPage() {
         }
         if (filterPriority) {
             filtered = filtered.filter(d => d.prioridade === filterPriority)
+        }
+        if (filterSituacao) {
+            filtered = filtered.filter(d => computeSituacao(d) === filterSituacao)
         }
         if (filterGlpi) {
             filtered = filtered.filter(d =>
@@ -80,7 +106,7 @@ export default function DashboardPage() {
         }
 
         return filtered
-    }, [demandas, filterStatus, filterPriority, filterGlpi, searchText])
+    }, [demandas, filterStatus, filterPriority, filterSituacao, filterGlpi, searchText])
 
     const statCards = [
         { label: 'Total', value: stats.total, color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: ClipboardList },
@@ -88,6 +114,8 @@ export default function DashboardPage() {
         { label: 'Desenvolvendo', value: stats.desenvolvendo, color: '#6366f1', bg: 'rgba(99,102,241,0.1)', icon: Code2 },
         { label: 'Aguardando', value: stats.aguardando, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', icon: Hourglass },
         { label: 'Entregues', value: stats.entregues, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', icon: CheckCircle2 },
+        { label: 'Atrasados', value: stats.atrasados, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: AlertCircle },
+        { label: 'Em Correção', value: stats.correcao, color: '#f97316', bg: 'rgba(249,115,22,0.1)', icon: RotateCcw },
     ]
 
     const formatDate = (dateStr) => {
@@ -163,6 +191,16 @@ export default function DashboardPage() {
                                 <option value="High">High</option>
                                 <option value="Highst">Highst</option>
                             </select>
+                            <select
+                                className="form-select"
+                                value={filterSituacao}
+                                onChange={e => setFilterSituacao(e.target.value)}
+                            >
+                                <option value="">Todas Situações</option>
+                                {Object.keys(SITUACAO_CONFIG).map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
                         </div>
                     </div>
 
@@ -183,29 +221,38 @@ export default function DashboardPage() {
                                         <th>Título</th>
                                         <th>Prioridade</th>
                                         <th>Status</th>
+                                        <th>Situação</th>
                                         <th>Prazo</th>
                                         <th>Criado em</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {filteredDemandas.map(d => (
-                                        <tr key={d.id}>
-                                            <td className="td-glpi">{d.numero_glpi}</td>
-                                            <td className="td-title">{d.titulo}</td>
-                                            <td>
-                                                <span className={`badge ${PRIORITY_CONFIG[d.prioridade]?.badge || ''}`}>
-                                                    {d.prioridade}
-                                                </span>
-                                            </td>
-                                            <td>
-                                                <span className={`badge ${STATUS_CONFIG[d.status]?.badge || ''}`}>
-                                                    {d.status}
-                                                </span>
-                                            </td>
-                                            <td>{formatDate(d.prazo)}</td>
-                                            <td>{formatDate(d.created_at)}</td>
-                                        </tr>
-                                    ))}
+                                    {filteredDemandas.map(d => {
+                                        const situacao = computeSituacao(d)
+                                        return (
+                                            <tr key={d.id}>
+                                                <td className="td-glpi">{d.numero_glpi}</td>
+                                                <td className="td-title">{d.titulo}</td>
+                                                <td>
+                                                    <span className={`badge ${PRIORITY_CONFIG[d.prioridade]?.badge || ''}`}>
+                                                        {d.prioridade}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className={`badge ${STATUS_CONFIG[d.status]?.badge || ''}`}>
+                                                        {d.status}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <span className={`badge ${SITUACAO_CONFIG[situacao]?.badge || ''}`}>
+                                                        {situacao}
+                                                    </span>
+                                                </td>
+                                                <td>{formatDate(d.prazo)}</td>
+                                                <td>{formatDate(d.created_at)}</td>
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>
