@@ -47,17 +47,45 @@ export default function DemandaForm({ demanda, onClose, onSaved, isVariation = f
         if (!aiPrompt.trim()) return
         setAiLoading(true)
         try {
-            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-            const resp = await fetch(`${supabaseUrl}/functions/v1/generate-ai`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                },
-                body: JSON.stringify({ prompt: aiPrompt }),
-            })
-            if (!resp.ok) throw new Error('Erro na resposta da IA')
-            const data = await resp.json()
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY
+            if (!apiKey) {
+                addToast('Chave VITE_GEMINI_API_KEY não configurada no .env', 'error')
+                setAiLoading(false)
+                return
+            }
+            const systemPrompt = `Você é um assistente de gestão de demandas de TI. 
+Com base na descrição do usuário, gere um JSON com os campos:
+- "titulo": título curto e profissional para a demanda (máx 80 caracteres)
+- "descricao": descrição detalhada e técnica da demanda (2-4 parágrafos)
+- "prioridade": uma de "Medium", "High" ou "Highst" baseada na urgência
+
+Responda APENAS com o JSON válido, sem markdown, sem blocos de código.`
+
+            const resp = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [
+                            { role: 'user', parts: [{ text: `${systemPrompt}\n\nDescrição do usuário: ${aiPrompt}` }] }
+                        ],
+                        generationConfig: {
+                            temperature: 0.7,
+                            maxOutputTokens: 1024,
+                        }
+                    }),
+                }
+            )
+            if (!resp.ok) {
+                const errData = await resp.json().catch(() => ({}))
+                throw new Error(errData?.error?.message || 'Erro na API Gemini')
+            }
+            const result = await resp.json()
+            const text = result.candidates?.[0]?.content?.parts?.[0]?.text || ''
+            // Clean potential markdown code blocks
+            const cleanText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
+            const data = JSON.parse(cleanText)
             if (data.titulo) onChange('titulo', data.titulo)
             if (data.descricao) onChange('descricao', data.descricao)
             if (data.prioridade && PRIORIDADES.includes(data.prioridade)) {
@@ -65,7 +93,7 @@ export default function DemandaForm({ demanda, onClose, onSaved, isVariation = f
             }
             addToast('Conteúdo gerado pela IA com sucesso!', 'success')
         } catch (err) {
-            addToast('Erro ao gerar com IA. Verifique a Edge Function.', 'error')
+            addToast('Erro ao gerar com IA: ' + (err.message || 'tente novamente'), 'error')
             console.error(err)
         }
         setAiLoading(false)
