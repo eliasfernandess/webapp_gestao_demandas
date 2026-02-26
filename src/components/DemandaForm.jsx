@@ -47,9 +47,9 @@ export default function DemandaForm({ demanda, onClose, onSaved, isVariation = f
         if (!aiPrompt.trim()) return
         setAiLoading(true)
         try {
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY
+            const apiKey = import.meta.env.VITE_GROQ_API_KEY
             if (!apiKey) {
-                addToast('Chave VITE_GEMINI_API_KEY não configurada no .env', 'error')
+                addToast('Chave VITE_GROQ_API_KEY não configurada no .env', 'error')
                 setAiLoading(false)
                 return
             }
@@ -61,29 +61,28 @@ Com base na descrição do usuário, gere um JSON com os campos:
 
 Responda APENAS com o JSON válido, sem markdown, sem blocos de código.`
 
-            const resp = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        contents: [
-                            { role: 'user', parts: [{ text: `${systemPrompt}\n\nDescrição do usuário: ${aiPrompt}` }] }
-                        ],
-                        generationConfig: {
-                            temperature: 0.7,
-                            maxOutputTokens: 1024,
-                        }
-                    }),
-                }
-            )
+            const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${apiKey}`,
+                },
+                body: JSON.stringify({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: aiPrompt },
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 1024,
+                }),
+            })
             if (!resp.ok) {
                 const errData = await resp.json().catch(() => ({}))
-                throw new Error(errData?.error?.message || 'Erro na API Gemini')
+                throw new Error(errData?.error?.message || 'Erro na API Groq')
             }
             const result = await resp.json()
-            const text = result.candidates?.[0]?.content?.parts?.[0]?.text || ''
-            // Clean potential markdown code blocks
+            const text = result.choices?.[0]?.message?.content || ''
             const cleanText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
             const data = JSON.parse(cleanText)
             if (data.titulo) onChange('titulo', data.titulo)
@@ -101,14 +100,14 @@ Responda APENAS com o JSON válido, sem markdown, sem blocos de código.`
 
     const handleSubmit = async (e) => {
         e.preventDefault()
-        if (!form.numero_glpi.trim() || !form.titulo.trim() || !form.descricao.trim()) {
+        if (!form.titulo.trim() || !form.descricao.trim()) {
             addToast('Preencha todos os campos obrigatórios', 'error')
             return
         }
         setSaving(true)
 
         const payload = {
-            numero_glpi: form.numero_glpi.trim(),
+            numero_glpi: form.numero_glpi.trim() || 'SEM GLPI',
             titulo: form.titulo.trim(),
             descricao: form.descricao.trim(),
             prioridade: form.prioridade,
@@ -225,7 +224,6 @@ Responda APENAS com o JSON válido, sem markdown, sem blocos de código.`
                                     placeholder="Ex: GLPI-12345"
                                     value={form.numero_glpi}
                                     onChange={e => onChange('numero_glpi', e.target.value)}
-                                    required
                                 />
                             </div>
                             <div className="form-group">

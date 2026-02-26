@@ -2,53 +2,55 @@ import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { useToast } from '../contexts/ToastContext'
 import DemandaDrawer from '../components/DemandaDrawer'
+import DemandaForm from '../components/DemandaForm'
 import {
     ClipboardList, Clock, Code2, Hourglass, CheckCircle2,
     Search, TrendingUp, AlertCircle, ShieldCheck, RotateCcw,
-    ChevronLeft, ChevronRight, CalendarDays, GitBranch
+    ChevronLeft, ChevronRight, CalendarDays, GitBranch,
+    Plus, Trash2, Filter, X, Sparkles, Eye, Flame, ArrowUp, Bell
 } from 'lucide-react'
 
 const STATUS_CONFIG = {
-    'Pendente': { badge: 'badge-pendente', icon: Clock, color: '#94a3b8' },
-    'Aprovação': { badge: 'badge-aprovacao', icon: ShieldCheck, color: '#a855f7' },
-    'Aguardando aprovação': { badge: 'badge-aguardando', icon: Hourglass, color: '#f59e0b' },
-    'Aprovado': { badge: 'badge-aprovado', icon: CheckCircle2, color: '#10b981' },
-    'Desenvolvendo': { badge: 'badge-desenvolvendo', icon: Code2, color: '#6366f1' },
-    'Aprovado e entregue': { badge: 'badge-entregue', icon: CheckCircle2, color: '#22c55e' },
-    'Em correção': { badge: 'badge-correcao', icon: RotateCcw, color: '#f97316' },
+    'Pendente': { color: '#94a3b8', badge: 'badge-secondary', icon: Clock },
+    'Aprovação': { color: '#8b5cf6', badge: 'badge-info', icon: ShieldCheck },
+    'Aguardando aprovação': { color: '#f59e0b', badge: 'badge-warning', icon: Hourglass },
+    'Aprovado': { color: '#22c55e', badge: 'badge-success', icon: CheckCircle2 },
+    'Desenvolvendo': { color: '#6366f1', badge: 'badge-primary', icon: Code2 },
+    'Aprovado e entregue': { color: '#10b981', badge: 'badge-success', icon: CheckCircle2 },
+    'Em correção': { color: '#f97316', badge: 'badge-danger', icon: RotateCcw },
 }
-
-const SITUACAO_CONFIG = {
-    'Em andamento': { badge: 'badge-sit-em-andamento' },
-    'Entregue': { badge: 'badge-sit-entregue' },
-    'Atrasado': { badge: 'badge-sit-atrasado' },
-    'Aguardando aprovação': { badge: 'badge-sit-aguardando' },
-}
-
 const PRIORITY_CONFIG = {
-    'Medium': { badge: 'badge-medium' },
-    'High': { badge: 'badge-high' },
-    'Highst': { badge: 'badge-highst' },
+    'Medium': { badge: 'badge-warning', color: '#f59e0b' },
+    'High': { badge: 'badge-danger', color: '#ef4444' },
+    'Highst': { badge: 'badge-danger', color: '#dc2626' },
+}
+const SITUACAO_CONFIG = {
+    'Em andamento': { badge: 'badge-primary', color: '#6366f1' },
+    'Atrasado': { badge: 'badge-danger', color: '#ef4444' },
+    'Entregue': { badge: 'badge-success', color: '#22c55e' },
+    'Aguardando aprovação': { badge: 'badge-warning', color: '#f59e0b' },
 }
 
-const STATUSES = ['Pendente', 'Aprovação', 'Aguardando aprovação', 'Aprovado', 'Desenvolvendo', 'Aprovado e entregue', 'Em correção']
+const STATUSES = Object.keys(STATUS_CONFIG)
 const PRIORIDADES = ['Medium', 'High', 'Highst']
-
 const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
 export default function DashboardPage() {
     const { addToast } = useToast()
     const [demandas, setDemandas] = useState([])
     const [loading, setLoading] = useState(true)
+    const [selectedDemanda, setSelectedDemanda] = useState(null)
+    const [showForm, setShowForm] = useState(false)
+    const [deletingId, setDeletingId] = useState(null)
+    const [showOverduePopup, setShowOverduePopup] = useState(false)
+
+    // Filters
+    const [searchText, setSearchText] = useState('')
     const [filterStatus, setFilterStatus] = useState('')
     const [filterPriority, setFilterPriority] = useState('')
     const [filterSituacao, setFilterSituacao] = useState('')
-    const [filterGlpi, setFilterGlpi] = useState('')
-    const [searchText, setSearchText] = useState('')
-    const [selectedDemanda, setSelectedDemanda] = useState(null)
-    const [expandedParents, setExpandedParents] = useState(new Set())
+    const [showFilters, setShowFilters] = useState(false)
 
-    // Month filter
     const now = new Date()
     const [filterMonth, setFilterMonth] = useState(now.getMonth())
     const [filterYear, setFilterYear] = useState(now.getFullYear())
@@ -63,6 +65,14 @@ export default function DashboardPage() {
         setLoading(false)
     }
 
+    // Auto-show overdue popup on first load
+    useEffect(() => {
+        if (!loading && demandas.length > 0) {
+            const overdue = demandas.filter(d => !d.demanda_pai_id && computeSituacao(d) === 'Atrasado')
+            if (overdue.length > 0) setShowOverduePopup(true)
+        }
+    }, [loading])
+
     const computeSituacao = (d) => {
         if (d.situacao) return d.situacao
         if (d.status === 'Aprovado e entregue') return 'Entregue'
@@ -71,31 +81,16 @@ export default function DashboardPage() {
         return 'Em andamento'
     }
 
-    const handleInlineUpdate = async (id, field, value) => {
-        const { error } = await supabase.from('demandas').update({ [field]: value }).eq('id', id)
-        if (error) { addToast('Erro ao atualizar', 'error') }
-        else { addToast('Atualizado!', 'success'); fetchDemandas() }
-    }
-
     const stats = useMemo(() => ({
         total: demandas.length,
         pendentes: demandas.filter(d => d.status === 'Pendente').length,
         desenvolvendo: demandas.filter(d => d.status === 'Desenvolvendo').length,
-        aguardando: demandas.filter(d => d.status === 'Aguardando aprovação' || d.status === 'Aprovação').length,
+        aguardando: demandas.filter(d => d.status === 'Aguardando aprovação').length,
         entregues: demandas.filter(d => d.status === 'Aprovado e entregue').length,
         atrasados: demandas.filter(d => computeSituacao(d) === 'Atrasado').length,
         correcao: demandas.filter(d => d.status === 'Em correção').length,
     }), [demandas])
 
-    const statusDistribution = useMemo(() => {
-        if (demandas.length === 0) return []
-        return Object.entries(STATUS_CONFIG).map(([status, conf]) => {
-            const count = demandas.filter(d => d.status === status).length
-            return { status, color: conf.color, count, pct: (count / demandas.length) * 100 }
-        }).filter(s => s.count > 0)
-    }, [demandas])
-
-    // Build children map
     const childrenMap = useMemo(() => {
         const map = {}
         demandas.forEach(d => {
@@ -107,8 +102,14 @@ export default function DashboardPage() {
         return map
     }, [demandas])
 
+    const hasActiveFilters = filterStatus || filterPriority || filterSituacao || monthFilterActive || searchText
+    const clearAllFilters = () => {
+        setFilterStatus(''); setFilterPriority(''); setFilterSituacao('')
+        setSearchText(''); setMonthFilterActive(false)
+    }
+
     const filteredDemandas = useMemo(() => {
-        let filtered = demandas.filter(d => !d.demanda_pai_id) // only parents
+        let filtered = demandas.filter(d => !d.demanda_pai_id)
         if (monthFilterActive) {
             filtered = filtered.filter(d => {
                 if (!d.created_at) return false
@@ -119,30 +120,40 @@ export default function DashboardPage() {
         if (filterStatus) filtered = filtered.filter(d => d.status === filterStatus)
         if (filterPriority) filtered = filtered.filter(d => d.prioridade === filterPriority)
         if (filterSituacao) filtered = filtered.filter(d => computeSituacao(d) === filterSituacao)
-        if (filterGlpi) filtered = filtered.filter(d => d.numero_glpi.toLowerCase().includes(filterGlpi.toLowerCase()))
         if (searchText) {
             const s = searchText.toLowerCase()
             filtered = filtered.filter(d => d.titulo.toLowerCase().includes(s) || d.descricao.toLowerCase().includes(s) || d.numero_glpi.toLowerCase().includes(s))
         }
         return filtered
-    }, [demandas, filterStatus, filterPriority, filterSituacao, filterGlpi, searchText, filterMonth, filterYear, monthFilterActive])
-
-    const toggleExpand = (id) => {
-        setExpandedParents(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
-    }
+    }, [demandas, filterStatus, filterPriority, filterSituacao, searchText, filterMonth, filterYear, monthFilterActive])
 
     const handleCardClick = (statusFilter) => {
-        if (filterStatus === statusFilter) { setFilterStatus('') }
-        else { setFilterStatus(statusFilter) }
+        if (filterStatus === statusFilter) setFilterStatus('')
+        else setFilterStatus(statusFilter)
     }
 
-    const prevMonth = () => {
-        if (filterMonth === 0) { setFilterMonth(11); setFilterYear(y => y - 1) }
-        else setFilterMonth(m => m - 1)
+    const handleDelete = async (id) => {
+        const { error } = await supabase.from('demandas').delete().eq('id', id)
+        if (error) addToast('Erro ao excluir demanda', 'error')
+        else { addToast('Demanda excluída!', 'success'); fetchDemandas() }
+        setDeletingId(null)
     }
-    const nextMonth = () => {
-        if (filterMonth === 11) { setFilterMonth(0); setFilterYear(y => y + 1) }
-        else setFilterMonth(m => m + 1)
+
+    const handleInlineUpdate = async (id, field, value) => {
+        const { error } = await supabase.from('demandas').update({ [field]: value }).eq('id', id)
+        if (error) addToast('Erro ao atualizar', 'error')
+        else { addToast('Atualizado!', 'success'); fetchDemandas() }
+    }
+
+    const prevMonth = () => { if (filterMonth === 0) { setFilterMonth(11); setFilterYear(y => y - 1) } else setFilterMonth(m => m - 1) }
+    const nextMonth = () => { if (filterMonth === 11) { setFilterMonth(0); setFilterYear(y => y + 1) } else setFilterMonth(m => m + 1) }
+
+    const formatDate = (dateStr) => { if (!dateStr) return '—'; return new Date(dateStr).toLocaleDateString('pt-BR') }
+
+    const getDaysRemaining = (prazo) => {
+        if (!prazo) return null
+        const diff = Math.ceil((new Date(prazo) - new Date()) / (1000 * 60 * 60 * 24))
+        return diff
     }
 
     const statCards = [
@@ -152,13 +163,8 @@ export default function DashboardPage() {
         { label: 'Aguardando', value: stats.aguardando, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', icon: Hourglass, statusFilter: 'Aguardando aprovação' },
         { label: 'Entregues', value: stats.entregues, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', icon: CheckCircle2, statusFilter: 'Aprovado e entregue' },
         { label: 'Atrasados', value: stats.atrasados, color: '#ef4444', bg: 'rgba(239,68,68,0.1)', icon: AlertCircle, statusFilter: '' },
-        { label: 'Em Correção', value: stats.correcao, color: '#f97316', bg: 'rgba(249,115,22,0.1)', icon: RotateCcw, statusFilter: 'Em correção' },
+        { label: 'Correção', value: stats.correcao, color: '#f97316', bg: 'rgba(249,115,22,0.1)', icon: RotateCcw, statusFilter: 'Em correção' },
     ]
-
-    const formatDate = (dateStr) => {
-        if (!dateStr) return '—'
-        return new Date(dateStr).toLocaleDateString('pt-BR')
-    }
 
     return (
         <>
@@ -174,7 +180,7 @@ export default function DashboardPage() {
                         <div className="overdue-alert-icon"><AlertCircle size={22} /></div>
                         <div className="overdue-alert-text">
                             <strong>{stats.atrasados} demanda(s) atrasada(s)</strong>
-                            <span>Existem demandas que ultrapassaram o prazo. Verifique abaixo.</span>
+                            <span>Existem demandas que ultrapassaram o prazo.</span>
                         </div>
                     </div>
                 )}
@@ -198,60 +204,91 @@ export default function DashboardPage() {
                     ))}
                 </div>
 
-                {/* Status Distribution */}
-                {statusDistribution.length > 0 && (
-                    <div className="status-distribution">
-                        <div className="status-distribution-title">Distribuição por Status</div>
-                        <div className="status-bar">
-                            {statusDistribution.map(s => (
-                                <div key={s.status} className="status-bar-segment" style={{ width: `${s.pct}%`, background: s.color }} title={`${s.status}: ${s.count}`} />
-                            ))}
-                        </div>
-                        <div className="status-distribution-legend">
-                            {statusDistribution.map(s => (
-                                <div key={s.status} className="legend-item">
-                                    <div className="legend-dot" style={{ background: s.color }} />
-                                    {s.status} ({s.count})
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Table Card */}
+                {/* Demandas Section */}
                 <div className="data-card">
                     <div className="data-card-header">
                         <h2>
                             <TrendingUp size={18} />
                             Demandas
-                            <span className="result-count">({filteredDemandas.length} de {demandas.length})</span>
+                            <span className="result-count">({filteredDemandas.length} de {demandas.filter(d => !d.demanda_pai_id).length})</span>
                         </h2>
                         <div className="filters-bar">
-                            <div className="month-filter">
-                                <button onClick={prevMonth} title="Mês anterior"><ChevronLeft size={16} /></button>
-                                <span>{MONTH_NAMES[filterMonth]} {filterYear}</span>
-                                <button onClick={nextMonth} title="Próximo mês"><ChevronRight size={16} /></button>
-                                <button
-                                    onClick={() => setMonthFilterActive(!monthFilterActive)}
-                                    title={monthFilterActive ? 'Desativar filtro de mês' : 'Ativar filtro de mês'}
-                                    style={{ color: monthFilterActive ? 'var(--accent)' : undefined, background: monthFilterActive ? 'var(--accent-light)' : undefined }}
-                                >
-                                    <CalendarDays size={16} />
-                                </button>
+                            <div className="search-wrapper">
+                                <Search size={16} className="search-icon" />
+                                <input type="text" className="form-input search-input-fancy" placeholder="Buscar demandas..." value={searchText} onChange={e => setSearchText(e.target.value)} />
                             </div>
-                            <input type="text" className="form-input search-input" placeholder="Buscar..." value={searchText} onChange={e => setSearchText(e.target.value)} style={{ marginBottom: 0 }} />
-                            <input type="text" className="form-input" placeholder="Nº GLPI" value={filterGlpi} onChange={e => setFilterGlpi(e.target.value)} style={{ minWidth: '100px' }} />
-                            <select className="form-select" value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-                                <option value="">Todas Prioridades</option>
-                                {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
-                            </select>
-                            <select className="form-select" value={filterSituacao} onChange={e => setFilterSituacao(e.target.value)}>
-                                <option value="">Todas Situações</option>
-                                {Object.keys(SITUACAO_CONFIG).map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
+                            <button className={`btn-filter-toggle ${showFilters ? 'active' : ''} ${hasActiveFilters ? 'has-filters' : ''}`} onClick={() => setShowFilters(!showFilters)}>
+                                <Filter size={15} />
+                                Filtros
+                                {hasActiveFilters && <span className="filter-dot" />}
+                            </button>
+                            <button className="btn btn-primary" onClick={() => setShowForm(true)}>
+                                <Plus size={16} /> Nova Demanda
+                            </button>
                         </div>
                     </div>
 
+                    {/* Enhanced Filters Panel */}
+                    {showFilters && (
+                        <div className="filters-panel">
+                            <div className="filters-panel-grid">
+                                <div className="filter-chip-group">
+                                    <span className="filter-chip-label">Status</span>
+                                    <div className="filter-chips">
+                                        {STATUSES.map(s => (
+                                            <button key={s} className={`filter-chip ${filterStatus === s ? 'active' : ''}`}
+                                                style={filterStatus === s ? { background: STATUS_CONFIG[s].color, color: '#fff', borderColor: STATUS_CONFIG[s].color } : {}}
+                                                onClick={() => setFilterStatus(filterStatus === s ? '' : s)}>
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="filter-chip-group">
+                                    <span className="filter-chip-label">Prioridade</span>
+                                    <div className="filter-chips">
+                                        {PRIORIDADES.map(p => (
+                                            <button key={p} className={`filter-chip ${filterPriority === p ? 'active' : ''}`}
+                                                style={filterPriority === p ? { background: PRIORITY_CONFIG[p].color, color: '#fff', borderColor: PRIORITY_CONFIG[p].color } : {}}
+                                                onClick={() => setFilterPriority(filterPriority === p ? '' : p)}>
+                                                {p}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="filter-chip-group">
+                                    <span className="filter-chip-label">Situação</span>
+                                    <div className="filter-chips">
+                                        {Object.keys(SITUACAO_CONFIG).map(s => (
+                                            <button key={s} className={`filter-chip ${filterSituacao === s ? 'active' : ''}`}
+                                                style={filterSituacao === s ? { background: SITUACAO_CONFIG[s].color, color: '#fff', borderColor: SITUACAO_CONFIG[s].color } : {}}
+                                                onClick={() => setFilterSituacao(filterSituacao === s ? '' : s)}>
+                                                {s}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="filter-chip-group">
+                                    <span className="filter-chip-label">Mês</span>
+                                    <div className="month-filter-fancy">
+                                        <button className="month-nav" onClick={prevMonth}><ChevronLeft size={14} /></button>
+                                        <span className="month-label">{MONTH_NAMES[filterMonth].substring(0, 3)} {filterYear}</span>
+                                        <button className="month-nav" onClick={nextMonth}><ChevronRight size={14} /></button>
+                                        <button className={`month-toggle ${monthFilterActive ? 'active' : ''}`} onClick={() => setMonthFilterActive(!monthFilterActive)}>
+                                            <CalendarDays size={14} />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            {hasActiveFilters && (
+                                <button className="btn-clear-all" onClick={clearAllFilters}>
+                                    <X size={14} /> Limpar todos os filtros
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Demand Cards Grid */}
                     {loading ? (
                         <div className="page-loading"><span className="loading-spinner" /></div>
                     ) : filteredDemandas.length === 0 ? (
@@ -259,72 +296,79 @@ export default function DashboardPage() {
                             <Search size={48} />
                             <h3>Nenhuma demanda encontrada</h3>
                             <p>Ajuste os filtros ou crie uma nova demanda</p>
+                            <button className="btn btn-primary" onClick={() => setShowForm(true)} style={{ marginTop: 12 }}>
+                                <Plus size={16} /> Criar Demanda
+                            </button>
                         </div>
                     ) : (
-                        <div className="table-wrapper">
-                            <table className="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>GLPI</th>
-                                        <th>Título</th>
-                                        <th>Prioridade</th>
-                                        <th>Status</th>
-                                        <th>Situação</th>
-                                        <th>Prazo</th>
-                                        <th>Criado em</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {filteredDemandas.map(d => {
-                                        const situacao = computeSituacao(d)
-                                        const children = childrenMap[d.id] || []
-                                        const isExpanded = expandedParents.has(d.id)
-                                        const renderRow = (item, isChild = false) => {
-                                            const sit = computeSituacao(item)
-                                            return (
-                                                <tr key={item.id} className={`clickable-row ${isChild ? 'variation-subrow' : ''}`} onClick={() => setSelectedDemanda(item)}>
-                                                    <td className="td-glpi">{item.numero_glpi}</td>
-                                                    <td className="td-title">
-                                                        {!isChild && children.length > 0 && (
-                                                            <button className={`variation-toggle ${isExpanded ? 'expanded' : ''}`} onClick={e => { e.stopPropagation(); toggleExpand(d.id) }}>
-                                                                <ChevronRight size={14} />
-                                                            </button>
-                                                        )}
-                                                        {isChild && <GitBranch size={12} style={{ marginRight: 4, opacity: 0.5 }} />}
-                                                        {item.titulo}
-                                                        {!isChild && children.length > 0 && (
-                                                            <span className="variation-count" onClick={e => { e.stopPropagation(); toggleExpand(d.id) }}>
-                                                                <GitBranch size={10} /> {children.length}
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                    <td onClick={e => e.stopPropagation()}>
-                                                        <select className={`inline-select ${PRIORITY_CONFIG[item.prioridade]?.badge || ''}`} value={item.prioridade} onChange={e => handleInlineUpdate(item.id, 'prioridade', e.target.value)} style={{ background: `var(--priority-${item.prioridade === 'Medium' ? 'medium' : item.prioridade === 'High' ? 'high' : 'highst'}-bg)` }}>
-                                                            {PRIORIDADES.map(p => <option key={p} value={p}>{p}</option>)}
-                                                        </select>
-                                                    </td>
-                                                    <td onClick={e => e.stopPropagation()}>
-                                                        <select className={`inline-select ${STATUS_CONFIG[item.status]?.badge || ''}`} value={item.status} onChange={e => handleInlineUpdate(item.id, 'status', e.target.value)} style={{ background: `var(--status-${item.status === 'Pendente' ? 'pendente' : item.status === 'Aprovação' ? 'aprovacao' : item.status === 'Aguardando aprovação' ? 'aguardando' : item.status === 'Aprovado' ? 'aprovado' : item.status === 'Desenvolvendo' ? 'desenvolvendo' : item.status === 'Aprovado e entregue' ? 'entregue' : 'correcao'}-bg)` }}>
-                                                            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                                                        </select>
-                                                    </td>
-                                                    <td><span className={`badge ${SITUACAO_CONFIG[sit]?.badge || ''}`}>{sit}</span></td>
-                                                    <td>{formatDate(item.prazo)}</td>
-                                                    <td>{formatDate(item.created_at)}</td>
-                                                </tr>
-                                            )
-                                        }
-                                        return [
-                                            renderRow(d),
-                                            ...(isExpanded ? children.map(c => renderRow(c, true)) : [])
-                                        ]
-                                    })}
-                                </tbody>
-                            </table>
+                        <div className="demand-cards-grid">
+                            {filteredDemandas.map(d => {
+                                const situacao = computeSituacao(d)
+                                const children = childrenMap[d.id] || []
+                                const daysRemaining = getDaysRemaining(d.prazo)
+                                const statusConf = STATUS_CONFIG[d.status] || {}
+                                const StatusIcon = statusConf.icon || Clock
+
+                                return (
+                                    <div
+                                        className={`demand-card priority-${d.prioridade.toLowerCase()}`}
+                                        key={d.id}
+                                        onClick={() => setSelectedDemanda(d)}
+                                        style={{ borderLeftColor: PRIORITY_CONFIG[d.prioridade]?.color }}
+                                    >
+                                        <div className="demand-card-top">
+                                            <span className="demand-card-glpi">{d.numero_glpi}</span>
+                                            <div className="demand-card-actions" onClick={e => e.stopPropagation()}>
+                                                <button className="demand-card-action" onClick={() => setSelectedDemanda(d)} title="Ver detalhes"><Eye size={14} /></button>
+                                                <button className="demand-card-action danger" onClick={() => setDeletingId(d.id)} title="Excluir"><Trash2 size={14} /></button>
+                                            </div>
+                                        </div>
+                                        <h3 className="demand-card-title">{d.titulo}</h3>
+                                        <p className="demand-card-desc">{d.descricao}</p>
+                                        <div className="demand-card-meta">
+                                            <div className="demand-card-badges">
+                                                <span className={`badge-sm ${statusConf.badge || ''}`}><StatusIcon size={11} /> {d.status}</span>
+                                                <span className={`badge-sm priority-badge-${d.prioridade.toLowerCase()}`}>
+                                                    {d.prioridade === 'Highst' ? <Flame size={11} /> : d.prioridade === 'High' ? <ArrowUp size={11} /> : null}
+                                                    {d.prioridade}
+                                                </span>
+                                            </div>
+                                            {children.length > 0 && (
+                                                <span className="demand-card-variations"><GitBranch size={12} /> {children.length}</span>
+                                            )}
+                                        </div>
+                                        <div className="demand-card-footer">
+                                            <span className={`situacao-dot ${situacao === 'Atrasado' ? 'danger' : situacao === 'Entregue' ? 'success' : situacao === 'Aguardando aprovação' ? 'warning' : 'primary'}`}>
+                                                {situacao}
+                                            </span>
+                                            {d.prazo && (
+                                                <span className={`days-badge ${daysRemaining !== null && daysRemaining < 0 ? 'overdue' : daysRemaining !== null && daysRemaining <= 3 ? 'urgent' : ''}`}>
+                                                    {daysRemaining !== null && daysRemaining < 0 ? `${Math.abs(daysRemaining)}d atrasado` : daysRemaining !== null ? `${daysRemaining}d restantes` : ''}
+                                                </span>
+                                            )}
+                                            {!d.prazo && <span className="days-badge">Sem prazo</span>}
+                                        </div>
+                                    </div>
+                                )
+                            })}
                         </div>
                     )}
                 </div>
             </div>
+
+            {/* Delete Confirmation */}
+            {deletingId && (
+                <div className="modal-overlay" onClick={() => setDeletingId(null)}>
+                    <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header"><h2>Confirmar exclusão</h2></div>
+                        <div className="modal-body"><p>Tem certeza que deseja excluir esta demanda?</p></div>
+                        <div className="modal-footer">
+                            <button className="btn btn-secondary" onClick={() => setDeletingId(null)}>Cancelar</button>
+                            <button className="btn btn-danger" onClick={() => handleDelete(deletingId)}>Excluir</button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Drawer */}
             {selectedDemanda && (
@@ -334,6 +378,50 @@ export default function DashboardPage() {
                     onUpdated={() => { fetchDemandas(); setSelectedDemanda(null) }}
                 />
             )}
+
+            {/* Create Form */}
+            {showForm && (
+                <DemandaForm
+                    onClose={() => setShowForm(false)}
+                    onSaved={fetchDemandas}
+                />
+            )}
+
+            {/* Overdue Popup */}
+            {showOverduePopup && (() => {
+                const overdue = demandas.filter(d => !d.demanda_pai_id && computeSituacao(d) === 'Atrasado')
+                return (
+                    <div className="modal-overlay" onClick={() => setShowOverduePopup(false)}>
+                        <div className="modal overdue-popup" onClick={e => e.stopPropagation()}>
+                            <div className="overdue-popup-header">
+                                <div className="overdue-popup-icon-wrap">
+                                    <Bell size={24} />
+                                </div>
+                                <h2>Demandas Atrasadas</h2>
+                                <p>{overdue.length} demanda(s) passaram do prazo</p>
+                                <button className="btn btn-ghost overdue-popup-close" onClick={() => setShowOverduePopup(false)}><X size={20} /></button>
+                            </div>
+                            <div className="overdue-popup-list">
+                                {overdue.map(d => {
+                                    const days = Math.abs(getDaysRemaining(d.prazo))
+                                    return (
+                                        <div className="overdue-popup-item" key={d.id} onClick={() => { setShowOverduePopup(false); setSelectedDemanda(d) }}>
+                                            <div className="overdue-popup-item-info">
+                                                <span className="overdue-popup-glpi">{d.numero_glpi}</span>
+                                                <span className="overdue-popup-title">{d.titulo}</span>
+                                            </div>
+                                            <span className="overdue-popup-days">{days}d atrasado</span>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                            <div className="modal-footer">
+                                <button className="btn btn-primary" onClick={() => setShowOverduePopup(false)} style={{ width: '100%' }}>Entendido</button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            })()}
         </>
     )
 }
